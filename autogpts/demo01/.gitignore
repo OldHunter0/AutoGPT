@@ -16,7 +16,7 @@ logs
 *.mp3
 mem.sqlite3
 venvAutoGPT
-
+.env.example
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -9,6 +9,22 @@ from forge.sdk import (
     TaskRequestBody,
     Workspace,
 )
+from .sdk import PromptEngine
+from jinja2 import Environment, FileSystemLoader
+
+# 初始化 Jinja2 环境
+file_loader = FileSystemLoader('path/to/templates')
+env = Environment(loader=file_loader)
+
+# 加载模板
+template = env.get_template('template.jinja')
+
+# 渲染模板
+prompt = template.render(task_description=task['description'], task_input=task['input'])
+
+# 使用渲染的提示进行进一步操作
+print(prompt)
+
 
 LOG = ForgeLogger(__name__)
 
@@ -92,55 +108,69 @@ class ForgeAgent(Agent):
         return task
 
     async def execute_step(self, task_id: str, step_request: StepRequestBody) -> Step:
-        """
-        For a tutorial on how to add your own logic please see the offical tutorial series:
-        https://aiedge.medium.com/autogpt-forge-e3de53cc58ec
-
-        The agent protocol, which is the core of the Forge, works by creating a task and then
-        executing steps for that task. This method is called when the agent is asked to execute
-        a step.
-
-        The task that is created contains an input string, for the benchmarks this is the task
-        the agent has been asked to solve and additional input, which is a dictionary and
-        could contain anything.
-
-        If you want to get the task use:
-
-        ```
+        # 获取任务
         task = await self.db.get_task(task_id)
-        ```
 
-        The step request body is essentially the same as the task request and contains an input
-        string, for the benchmarks this is the task the agent has been asked to solve and
-        additional input, which is a dictionary and could contain anything.
-
-        You need to implement logic that will take in this step input and output the completed step
-        as a step object. You can do everything in a single step or you can break it down into
-        multiple steps. Returning a request to continue in the step output, the user can then decide
-        if they want the agent to continue or not.
-        """
-        # An example that
+        # 创建步骤
         step = await self.db.create_step(
             task_id=task_id, input=step_request, is_last=True
         )
 
-        self.workspace.write(task_id=task_id, path="output.txt", data=b"Washington D.C")
+        # 加载并渲染提示模板
+        template = Environment.get_template('template.jinja')
+        system_prompt = "This is the system prompt."
+        task_prompt = template.render(task_description=task['description'], task_input=task['input'])
 
-        await self.db.create_artifact(
-            task_id=task_id,
-            step_id=step.step_id,
-            file_name="output.txt",
-            relative_path="",
-            agent_created=True,
-        )
+        # 构建消息列表
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": task_prompt}
+        ]
 
-        step.output = "hello, world!"
+        try:
+            # 定义 chat completion 请求的参数
+            chat_completion_kwargs = {
+                "messages": messages,
+                "model": "gpt-3.5-turbo",
+            }
+            # 发出 chat completion 请求并解析响应
+            chat_response = await chat_completion_request(**chat_completion_kwargs)
+            answer = json.loads(chat_response["choices"][0]["message"]["content"])
 
-        LOG.info(
-            f"\t✅ Final Step completed: {step.step_id}. \n"
-            + f"Output should be placeholder text Washington D.C. You'll need to \n"
-            + f"modify execute_step to include LLM behavior. Follow the tutorial "
-            + f"if confused. "
-        )
+            # 记录答案以便调试
+            LOG.info(pprint.pformat(answer))
+
+        except json.JSONDecodeError as e:
+            # 处理 JSON 解码错误
+            LOG.error(f"无法解码聊天响应: {chat_response}")
+        except Exception as e:
+            # 处理其他异常
+            LOG.error(f"无法生成聊天响应: {e}")
+
+
 
         return step
+    
+    @ability(
+        name="write_file",
+        description="Write data to a file",
+        parameters=[
+            {
+                "name": "file_path",
+                "description": "Path to the file",
+                "type": "string",
+                "required": True,
+            },
+            {
+                "name": "data",
+                "description": "Data to write to the file",
+                "type": "bytes",
+                "required": True,
+            },
+        ],
+        output_type="None",
+    )
+    async def write_file(agent, task_id: str, file_path: str, data: bytes) -> None:
+        pass
+
+
